@@ -1,3 +1,6 @@
+//Divide two integers without using multiplication, division and mod operator.
+//If it is overflow, return MAX_INT.
+
 int divide(int dividend, int divisor) {
 	//in case could cause overflow
 	if (!divisor || (dividend == INT_MIN && divisor = -1) {
