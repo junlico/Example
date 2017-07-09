@@ -3,7 +3,7 @@
 
 int divide(int dividend, int divisor) {
 	//the cases could cause overflow
-	if (!divisor || (dividend == INT_MIN && divisor = -1) {
+	if (!divisor || (dividend == INT_MIN && divisor == -1)) {
 		return INT_MAX;
 	}
 	int sign = ((dividend < 0) ^ (divisor < 0)) ? -1 : 1;
