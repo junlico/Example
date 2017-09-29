@@ -32,23 +32,28 @@ def get_sales_quantity_list(sales_file_name):
     #save data into csv file in Downloads folder
     df.to_csv(gs_connect.file_in_downloads("sales.csv"),float_format="%.f")
 
-def payments_data_range_report(service, file_name, product_info_df):
-    use_cols = ["type", "order id", "sku", "description", "quantity", "product sales", "total"]
-    transaction_df = pandas.read_csv(file_in_downloads(file_name), skiprows=7, usecols=use_cols, thousands=",")
+def update_transaction(service, file_name, product_info_df):
+    # use_cols = ["type", "order id", "sku", "description", "quantity", "product sales", "total"]
+    # transaction_df = pandas.read_csv(file_in_downloads(file_name), skiprows=7, usecols=use_cols, thousands=",")
+    #
+    # order_df = transaction_df.loc[transaction_df["type"]=="Order", ["sku", "quantity", "product sales", "total"]].groupby(["sku"]).sum().reset_index()
+    # refund_df = transaction_df.loc[transaction_df["type"]=="Refund", ["sku", "quantity", "product sales", "total"]].groupby(["sku"]).sum().reset_index()
+    # transaction_df = pandas.merge(order_df, refund_df, how="left", on=["sku"]).fillna(0)
+    # curr_df = pandas.merge(product_info_df.loc[:,["SID", "ASIN", "SKU"]], transaction_df, how="left", left_on=["SKU"], right_on=["sku"]).fillna(0)
+    # curr_df["product sales"] = curr_df["product sales_x"] + curr_df["product sales_y"]
+    # curr_df["total"] = curr_df["total_x"] + curr_df["total_y"]
+    # curr_df = curr_df.loc[:, ["SID", "ASIN", "product sales", "total", "quantity_x", "quantity_y"]].rename(columns={"quantity_x":"Sold", "quantity_y":"Return"}).fillna(0)
+    # print(curr_df)
 
-    order_df = transaction_df.loc[transaction_df["type"]=="Order", ["sku", "quantity", "product sales", "total"]].groupby(["sku"]).sum().reset_index()
-    #df = order_df.groupby(["order id", "sku"])["quantity"].unique()
-    #print(df[df.apply(lambda x: len(x) > 1)])
-    refund_df = transaction_df.loc[transaction_df["type"]=="Refund", ["sku", "quantity", "product sales", "total"]].groupby(["sku"]).sum().reset_index()
-    transaction_df = pandas.merge(order_df, refund_df, how="left", on=["sku"]).fillna(0)
-    df = pandas.merge(product_info_df.loc[:,["SID", "ASIN", "SKU"]], transaction_df, how="left", left_on=["SKU"], right_on=["sku"]).drop(["sku"], axis=1).fillna(0)
-    df["Avg Price"] = ((df["product sales_x"] + df["product sales_y"]) / (df["quantity_x"] - df["quantity_y"])).round(2)
-    df["Avg Revenue"] = ((df["total_x"] + df["total_y"]) / (df["quantity_x"] - df["quantity_y"])).round(2)
-    df = df.loc[:, ["SID", "ASIN", "Avg Price", "Avg Revenue", "quantity_x", "quantity_y"]].rename(columns={"quantity_x":"Sold", "quantity_y":"Return"}).fillna(0)
-    transaction_values = [df.columns.tolist()] + df.values.tolist()
+    prev_updates = service.read_range(report_sid, "Transaction!A:F")
+    prev_df = pandas.DataFrame(prev_updates[1:], columns=prev_updates[0])
+    prev_df["product sales"] = prev_df["Avg Price"] * (prev_df["Sold"] - prev_df["Return"])
+    prev_df["total"] = prev_df["Avg Revenue"] * (prev_df["Sold"] - prev_df["Return"])
+    print(prev_df)
+    #transaction_values = [df.columns.tolist()] + df.values.tolist()
     # print(df.head(10))
-    print("Uploading transactions...")
-    service.write_range(report_sid, "Transaction!A:F", transaction_values)
+    #print("Uploading transactions...")
+    #service.write_range(report_sid, "Transaction!A:F", transaction_values)
 
 
 def update_inventory(service):
@@ -97,7 +102,7 @@ def test(service):
     service.write_range(promotion_sid, "刷单详情!A2:A", purchase_date)
     #print(df)
 
-def upload_fee_preview(service, file_name, product_info_df):
+def update_fee_preview(service, file_name, product_info_df):
     use_cols = ["asin", "sales-price", "estimated-referral-fee-per-unit", "expected-fulfillment-fee-per-unit"]
     rename = {"estimated-referral-fee-per-unit":"referral", "expected-fulfillment-fee-per-unit":"fulfillment"}
     curr_df = pandas.read_csv(os.path.join(download_dir, file_name), sep="\t", encoding="ISO-8859-1", usecols=use_cols).rename(columns=rename)
@@ -111,7 +116,7 @@ def upload_fee_preview(service, file_name, product_info_df):
     upload_df.loc[pandas.notnull(upload_df["sales-price"]), "Referral %"] = (upload_df["referral"] / upload_df["sales-price"]).round(2)
     upload_df.loc[pandas.notnull(upload_df["sales-price"]), "Update Date"] = datetime.datetime.now().strftime("%m/%d/%Y")
     upload_df = upload_df.loc[:, "SID":"Update Date"].fillna("")
-
+    service.clear(report_sid, "Product_Info!A:F")
     upload_values = [upload_df.columns.tolist()] + upload_df.values.tolist()
     print("Upload Fee Preview Info...")
     service.write_range(report_sid, "Product_Info!A:F", upload_values)
@@ -119,49 +124,31 @@ def upload_fee_preview(service, file_name, product_info_df):
 
 def read_report(service, product_info_df):
     #check_list for fee_preview_report, order_report, return_report, ads_cost_report
-    check_list = [False, False, False, False]
     file_list = os.listdir(download_dir)
+    '''
     product_pattern = r"\d+.txt"
+    check_list = [False, False]
     selected_list = sorted([f for f in file_list if re.match(product_pattern, f)], reverse=True)
     for f in selected_list:
         if all(check == True for check in check_list):
             break
 
         df = pandas.read_csv(os.path.join(download_dir, f), sep="\t", encoding="ISO-8859-1", nrows=0)
-
-        if (any(header == "longest-side" for header in df.columns.tolist()) and not check_list[0]):
+        if any(header == "longest-side" for header in df.columns.tolist()) and not check_list[0]:
             # if the report is fee_preview report, it contains "longest-side" in the DataFrame header
-            upload_fee_preview(service, f, product_info_df)
+            update_fee_preview(service, f, product_info_df)
             check_list[0] = True
 
 
     '''
-        if not check_list[1] and any(header == "order-status" for header in df.columns.tolist()):
-            # if the report is order_report, it contains "order-status" in the DataFrame header
-
-            use_cols = ["amazon-order-id", "sales-channel", "order-status", "asin", "quantity", "item-price"]
-            sales_df = pandas.read_csv(os.path.join(download_dir, f), sep="\t", encoding="ISO-8859-1", usecols=use_cols)
-            sales_df = sales_df.loc[(sales_df["sales-channel"] == "Amazon.com") & (sales_df["order-status"] != "Cancelled")]
-            sales_df.drop(["sales-channel", "order-status"], axis=1)
-            #df = sales_df.groupby(["amazon-order-id", "asin"])["quantity"].unique()
-            #print(df[df.apply(lambda x: len(x) > 1)])
-            sales_df = sales_df.groupby(["amazon-order-id", "asin"]).sum()
-            check_list[1] = True
-
-        elif not check_list[2] and any(header == "return-date" for header in df.columns.tolist()):
-            # if the report is return_report, it contains "return-date" in the DataFrame header
-            use_cols = ["order-id", "asin", "quantity"]
-            return_df = pandas.read_csv(os.path.join(download_dir, f), sep="\t", encoding="ISO-8859-1", usecols=use_cols)
-            return_df = return_df.groupby(["order-id", "asin"]).sum()
-            print(return_df)
-            check_list[2] = True
     #print(sales_df)
-    payment_pattern = r"\w+-\w+CustomTransaction.csv"
-    selected_list = sorted([f for f in file_list if re.match(payment_pattern, f)], reverse=True)
-    payments_data_range_report(service, selected_list[0], product_info_df)
-    #print(selected_list)
+    prev_date = service.read_range(report_sid, "Transaction!J1")[0][0]
+    if prev_date < datetime.datetime.now().strftime("%m/%d/%Y"):
+        payment_pattern = r"\w+-\w+CustomTransaction.csv"
+        selected_list = sorted([f for f in file_list if re.match(payment_pattern, f)], reverse=True)
+        update_transaction(service, selected_list[0], product_info_df)
     #product_info_df.to_csv("SKU.csv", sep="\t", index=False)
-    '''
+
 if __name__ == "__main__":
     service = gs_connect.gservice()
     product_info_df = get_product_info_df(service)
