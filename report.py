@@ -33,27 +33,35 @@ def get_sales_quantity_list(sales_file_name):
     df.to_csv(gs_connect.file_in_downloads("sales.csv"),float_format="%.f")
 
 def update_transaction(service, file_name, product_info_df):
-    # use_cols = ["type", "order id", "sku", "description", "quantity", "product sales", "total"]
-    # transaction_df = pandas.read_csv(file_in_downloads(file_name), skiprows=7, usecols=use_cols, thousands=",")
-    #
-    # order_df = transaction_df.loc[transaction_df["type"]=="Order", ["sku", "quantity", "product sales", "total"]].groupby(["sku"]).sum().reset_index()
-    # refund_df = transaction_df.loc[transaction_df["type"]=="Refund", ["sku", "quantity", "product sales", "total"]].groupby(["sku"]).sum().reset_index()
-    # transaction_df = pandas.merge(order_df, refund_df, how="left", on=["sku"]).fillna(0)
-    # curr_df = pandas.merge(product_info_df.loc[:,["SID", "ASIN", "SKU"]], transaction_df, how="left", left_on=["SKU"], right_on=["sku"]).fillna(0)
-    # curr_df["product sales"] = curr_df["product sales_x"] + curr_df["product sales_y"]
-    # curr_df["total"] = curr_df["total_x"] + curr_df["total_y"]
-    # curr_df = curr_df.loc[:, ["SID", "ASIN", "product sales", "total", "quantity_x", "quantity_y"]].rename(columns={"quantity_x":"Sold", "quantity_y":"Return"}).fillna(0)
-    # print(curr_df)
+    print(file_name)
+    use_cols = ["type", "order id", "sku", "description", "quantity", "product sales", "total"]
+    transaction_df = pandas.read_csv(file_in_downloads(file_name), skiprows=7, usecols=use_cols, thousands=",")
+    order_df = transaction_df.loc[transaction_df["type"]=="Order", ["sku", "quantity", "product sales", "total"]].groupby(["sku"], as_index=False).sum()
+    refund_df = transaction_df.loc[transaction_df["type"]=="Refund", ["sku", "quantity", "product sales", "total"]].groupby(["sku"], as_index=False).sum()
+    curr_df = pandas.merge(order_df, refund_df, how="left", on=["sku"]).fillna(0)
+    #curr_df = pandas.merge(product_info_df.loc[:,["SID", "ASIN", "SKU"]], transaction_df, how="left", left_on=["SKU"], right_on=["sku"]).fillna(0)
+    # print(curr_df.head(20))
+    # print(curr_df.head(10))
+    curr_df["Total Sales"] = curr_df["product sales_x"] + curr_df["product sales_y"]
+    curr_df["Total Revenue"] = curr_df["total_x"] + curr_df["total_y"]
+    curr_df = curr_df.loc[:, ["sku", "Total Sales", "Total Revenue", "quantity_x", "quantity_y"]].rename(columns={"sku":"SKU", "quantity_x":"Sold", "quantity_y":"Return"})
+    # print(curr_df.head(20))
+    # print(curr_df.dropna().shape[0])
 
-    prev_updates = service.read_range(report_sid, "Transaction!A:F")
+    prev_updates = service.read_range(report_sid, "Transaction!C:G")
     prev_df = pandas.DataFrame(prev_updates[1:], columns=prev_updates[0])
-    prev_df["product sales"] = prev_df["Avg Price"] * (prev_df["Sold"] - prev_df["Return"])
-    prev_df["total"] = prev_df["Avg Revenue"] * (prev_df["Sold"] - prev_df["Return"])
-    print(prev_df)
-    #transaction_values = [df.columns.tolist()] + df.values.tolist()
-    # print(df.head(10))
-    #print("Uploading transactions...")
-    #service.write_range(report_sid, "Transaction!A:F", transaction_values)
+    prev_df = prev_df.apply(pandas.to_numeric, errors="ignore")
+    # print(prev_df.iloc[:, 1:].head(20))
+    # print(prev_df.head(10))
+    # print(prev_df.dtypes)
+
+    update_df = pandas.concat([prev_df, curr_df]).groupby(["SKU"], as_index=False).sum()
+    update_df = pandas.merge(product_info_df.loc[:, ["SID", "ASIN", "SKU"]], update_df, how="left", on=["SKU"]).fillna(0)
+    print(update_df.head(20))
+    update_values = [update_df.columns.tolist()] + update_df.values.tolist()
+    #service.clear(report_sid, "Transaction!A:G")
+    # print("Uploading transactions...")
+    #service.write_range(report_sid, "Transaction!A:G", values)
 
 
 def update_inventory(service):
@@ -142,7 +150,7 @@ def read_report(service, product_info_df):
 
     '''
     #print(sales_df)
-    prev_date = service.read_range(report_sid, "Transaction!J1")[0][0]
+    prev_date = service.read_range(report_sid, "Transaction!N1")[0][0]
     if prev_date < datetime.datetime.now().strftime("%m/%d/%Y"):
         payment_pattern = r"\w+-\w+CustomTransaction.csv"
         selected_list = sorted([f for f in file_list if re.match(payment_pattern, f)], reverse=True)
@@ -150,6 +158,16 @@ def read_report(service, product_info_df):
     #product_info_df.to_csv("SKU.csv", sep="\t", index=False)
 
 if __name__ == "__main__":
-    service = gs_connect.gservice()
-    product_info_df = get_product_info_df(service)
-    read_report(service, product_info_df)
+    # service = gs_connect.gservice()
+    # product_info_df = get_product_info_df(service)
+    # read_report(service, product_info_df)
+    s = "2017Mar1-2017Sep16CustomTransaction.csv"
+    start_index = s.find("-")
+    end_index = s.find("CustomTransaction")
+    print(s[start_index + 1: end_index])
+    start_date = datetime.datetime.strptime(s[:s.find("-")], "%Y%b%d").strftime("%m/%d/%Y")
+    end_date = datetime.datetime.strptime(s[start_index + 1: end_index], "%Y%b%d").strftime("%m/%d/%Y")
+    print(start_date, end_date)
+    print(end_date+1)
+    # print(s.find("-"))
+    # start_date = datetime.datetime.strptime(s[:8])
